@@ -1,6 +1,0 @@
-{
-  "name": "Upshift India — Workplace-Integrated Learning",
-  "description": "Upshift India connects learners with real companies, real tools and real problems through Workplace-Integrated Learning (WIL). Cybersecurity, Robotics & Spacetech demo workshops in Hyderabad.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

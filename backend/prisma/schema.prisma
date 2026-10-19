@@ -1,0 +1,449 @@
+// Upshift dashboard backend — MySQL schema. Set up with `npm run db:setup`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+/// The one dashboard login. Kept in step with ADMIN_USERNAME / ADMIN_PASSWORD in .env on every start.
+model Admin {
+  id           Int       @id @default(autoincrement())
+  username     String    @unique @db.VarChar(120)
+  passwordHash String    @db.VarChar(100)
+  /// Bumped when the password changes, which ends older sign-ins
+  tokenVersion Int       @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("admins")
+}
+
+/// One Google Sheet the dashboard reads: "babu", "vasudha" (ad spend) or "sales".
+model SheetSource {
+  id             String    @id @db.VarChar(40)
+  fileName       String?   @db.VarChar(191)
+  sheetName      String?   @db.VarChar(191)
+  /// False when the last read failed; the tables keep the last good data
+  ok             Boolean   @default(false)
+  error          String?   @db.Text
+  /// What was found in the sheet, shown on the Sources page
+  checks         Json?
+  warnings       Json?
+  /// Vasudha's summary table: its title and funnel column headings, in sheet order
+  summaryTitle   String?   @db.VarChar(191)
+  summaryColumns Json?
+  /// Fingerprint of the sheet's cells, to skip re-saving when nothing changed
+  hash           String?   @db.Char(64)
+  /// When the tables were last filled from this sheet / last time it was read
+  dataAt         DateTime?
+  checkedAt      DateTime?
+
+  @@map("sheet_sources")
+}
+
+/// Daily ad spend and leads per campaign / workshop.
+model AdSpendRow {
+  id       Int      @id @default(autoincrement())
+  owner    String   @db.VarChar(40)
+  date     DateTime @db.Date
+  campaign String   @db.VarChar(191)
+  leads    Int
+  spend    Decimal  @db.Decimal(12, 2)
+  cpl      Decimal? @db.Decimal(12, 2)
+
+  @@index([owner, date])
+  @@map("ad_spend_rows")
+}
+
+/// Awareness campaigns (reach instead of leads), per day.
+model AwarenessRow {
+  id        Int      @id @default(autoincrement())
+  owner     String   @db.VarChar(40)
+  date      DateTime @db.Date
+  campaign  String   @db.VarChar(191)
+  reach     Int
+  spend     Decimal  @db.Decimal(12, 2)
+  costPer1k Decimal? @db.Decimal(12, 2)
+
+  @@index([owner, date])
+  @@map("awareness_rows")
+}
+
+/// Per-campaign totals from the summary table, with its funnel counts (e.g. Interested, Registered).
+model CampaignSummary {
+  id       Int      @id @default(autoincrement())
+  owner    String   @db.VarChar(40)
+  position Int
+  campaign String   @db.VarChar(191)
+  leads    Int
+  spend    Decimal  @db.Decimal(12, 2)
+  cpl      Decimal? @db.Decimal(12, 2)
+  /// Funnel counts keyed by the column heading, e.g. {"Interested": 12, "Registered": null}
+  counts   Json
+
+  @@index([owner])
+  @@map("campaign_summaries")
+}
+
+/// Awareness lines of the summary table (period totals).
+model AwarenessSummary {
+  id        Int      @id @default(autoincrement())
+  owner     String   @db.VarChar(40)
+  position  Int
+  campaign  String   @db.VarChar(191)
+  reach     Int
+  spend     Decimal  @db.Decimal(12, 2)
+  costPer1k Decimal? @db.Decimal(12, 2)
+
+  @@index([owner])
+  @@map("awareness_summaries")
+}
+
+/// One tab of the sales sheet = one workshop / campaign.
+model SalesWorkshop {
+  id            Int            @id @default(autoincrement())
+  position      Int
+  name          String         @unique @db.VarChar(191)
+  /// Student rows in the tab, paid or not
+  students      Int
+  /// Column letters the amount / payment date / name were read from
+  amountColumn  String?        @db.VarChar(8)
+  dateColumn    String?        @db.VarChar(8)
+  studentColumn String?        @db.VarChar(8)
+  headerRow     Int?
+  /// "header" = found by heading, "content" = guessed from the cells
+  detectedBy    String         @db.VarChar(10)
+  warnings      Json
+  payments      SalesPayment[]
+
+  @@map("sales_workshops")
+}
+
+/// One student payment.
+model SalesPayment {
+  id         Int           @id @default(autoincrement())
+  workshop   SalesWorkshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  workshopId Int
+  paidOn     DateTime?     @db.Date
+  /// Null when the tab has no amount column (the student paid, the sum isn't in the sheet)
+  amount     Decimal?      @db.Decimal(12, 2)
+  student    String        @db.VarChar(191)
+
+  @@index([workshopId])
+  @@index([paidOn])
+  @@map("sales_payments")
+}
+
+/// Tabs of the sales sheet that were left out, and why (empty, no amount or date column).
+model SalesSkippedTab {
+  id     Int    @id @default(autoincrement())
+  name   String @db.VarChar(191)
+  reason String @db.VarChar(191)
+
+  @@map("sales_skipped_tabs")
+}
+
+/// Log of every read of the sheets (timer or Refresh button).
+model SyncRun {
+  id         Int       @id @default(autoincrement())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean   @default(false)
+  fresh      Boolean   @default(false)
+  error      String?   @db.Text
+  /// Per-sheet result, e.g. {"babu":"saved","vasudha":"unchanged","sales":"Sheet link not set"}
+  sources    Json?
+
+  @@index([startedAt])
+  @@map("sync_runs")
+}
+
+/// An idea sent in from the Idea Challenge page (/idea-challenge).
+model IdeaSubmission {
+  id            Int      @id @default(autoincrement())
+  name          String   @db.VarChar(120)
+  email         String   @db.VarChar(191)
+  phone         String   @db.VarChar(20)
+  /// True when the mobile number was confirmed with a one-time code before sending
+  phoneVerified Boolean  @default(false)
+  college       String?  @db.VarChar(191)
+  /// e.g. "2nd year B.Tech", "Working professional"
+  stage         String?  @db.VarChar(60)
+  title         String   @db.VarChar(120)
+  category      String   @db.VarChar(40)
+  /// Optional: the short form on the page asks only for the idea
+  problem       String?  @db.Text
+  idea          String   @db.Text
+  /// Optional attachment (pitch deck, doc, image), saved in backend/uploads/ideas as fileStored
+  fileName      String?  @db.VarChar(191)
+  fileStored    String?  @db.VarChar(80)
+  fileType      String?  @db.VarChar(120)
+  fileSize      Int?
+  /// Shown (first name, college, title) on the page's ideas wall
+  showOnWall    Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([email])
+  @@map("idea_submissions")
+}
+
+/// One-time codes sent to a mobile number to confirm it (Idea Challenge form). Only a hash of the code is kept.
+model OtpCode {
+  id          Int       @id @default(autoincrement())
+  /// 10-digit Indian mobile number, without +91
+  phone       String    @db.VarChar(15)
+  /// Hash of our own code (console mode); null when the SMS service generates the code
+  codeHash    String?   @db.Char(64)
+  /// The SMS service's campaign id for this code (Spear UC), for tracing delivery
+  providerRef String?   @db.VarChar(80)
+  /// Wrong codes tried against this one; it stops working after 5
+  attempts    Int       @default(0)
+  ip          String?   @db.VarChar(64)
+  expiresAt   DateTime
+  /// Set once the right code is entered, so a code works only once
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([phone, createdAt])
+  @@index([ip, createdAt])
+  @@map("otp_codes")
+}
+
+/// A team registered for the Sober October Hackathon (/hackathon). 1, 2 or 4 members; the first is the team lead.
+model HackathonTeam {
+  id               Int               @id @default(autoincrement())
+  teamName         String            @db.VarChar(120)
+  /// "students", "graduates" (recent graduates) or "mixed"
+  category         String            @db.VarChar(20)
+  /// What the team wants to build (optional)
+  idea             String?           @db.Text
+  /// Agreed to hear about Upshift programmes (optional on the form)
+  marketingConsent Boolean           @default(false)
+  /// Payment / confirmation is done on WhatsApp for now; updated by hand
+  paid             Boolean           @default(false)
+  /// The logged-in site account that registered the team, if any
+  account          ArcUser?          @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  accountId        Int?
+  createdAt        DateTime          @default(now())
+  members          HackathonMember[]
+
+  @@index([createdAt])
+  @@map("hackathon_teams")
+}
+
+model HackathonMember {
+  id           Int           @id @default(autoincrement())
+  team         HackathonTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       Int
+  /// 1 = team lead
+  position     Int
+  name         String        @db.VarChar(120)
+  /// 10-digit Indian mobile number, without +91
+  phone        String        @db.VarChar(15)
+  email        String?       @db.VarChar(191)
+  /// College (students) or company (experienced)
+  organisation String?       @db.VarChar(191)
+
+  @@index([teamId])
+  @@index([phone])
+  @@map("hackathon_members")
+}
+
+// ---------------------------------------------------------------- Winter Arc · AI Idea Challenge (/idea-challenge)
+
+/// A Winter Arc participant. One account per mobile number, verified by OTP.
+model ArcUser {
+  id             Int          @id @default(autoincrement())
+  /// 10-digit Indian mobile number, without +91
+  phone          String       @unique @db.VarChar(15)
+  name           String       @db.VarChar(60)
+  /// College, year and branch: optional (the short form on the page asks only for name and mobile)
+  collegeCity    String?      @db.VarChar(191)
+  year           String?      @db.VarChar(40)
+  branch         String?      @db.VarChar(60)
+  email          String?      @db.VarChar(191)
+  heardFrom      String?      @db.VarChar(60)
+  utmSource      String?      @db.VarChar(120)
+  utmMedium      String?      @db.VarChar(120)
+  utmCampaign    String?      @db.VarChar(120)
+  /// Current state of the two optional boxes (history is in arc_consents)
+  publishOk      Boolean      @default(false)
+  classUpdatesOk Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  /// Last OTP sign-in anywhere on the site
+  lastLoginAt    DateTime?
+  entries        ArcEntry[]
+  consents       ArcConsent[]
+  logins         AccountLogin[]
+  productClicks  ProductClick[]
+  hackathonTeams HackathonTeam[]
+
+  @@map("arc_users")
+}
+
+/// Every sign-in and sign-out on the website (main page, Idea Challenge, Hackathon). The account is arc_users.
+model AccountLogin {
+  id        Int      @id @default(autoincrement())
+  user      ArcUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  /// "login" or "logout"
+  event     String   @db.VarChar(10)
+  /// Where it happened: "main", "idea-challenge" or "hackathon"
+  page      String   @db.VarChar(30)
+  ip        String?  @db.VarChar(64)
+  userAgent String?  @db.VarChar(255)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("account_logins")
+}
+
+/// Product interest: every workshop "Reserve Seat", free class, company enquiry or hackathon payment click.
+/// userId is set when the visitor is logged in.
+model ProductClick {
+  id          Int      @id @default(autoincrement())
+  user        ArcUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId      Int?
+  /// e.g. "workshop:robotics", "class:robotics", "company:host-workshop", "hackathon"
+  productKey  String   @db.VarChar(60)
+  productName String   @db.VarChar(120)
+  /// Price in rupees, when the product has one
+  price       Int?
+  /// e.g. "reserve_whatsapp", "join_class", "enquire", "pay_whatsapp"
+  action      String   @db.VarChar(30)
+  page        String   @db.VarChar(30)
+  ip          String?  @db.VarChar(64)
+  userAgent   String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([productKey])
+  @@index([createdAt])
+  @@map("product_clicks")
+}
+
+/// Every consent box shown, ticked or not, with the exact label text and page version at that time.
+model ArcConsent {
+  id          Int      @id @default(autoincrement())
+  user        ArcUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      Int
+  /// "age", "terms", "publish" or "class_updates"
+  box         String   @db.VarChar(20)
+  ticked      Boolean
+  label       String   @db.Text
+  pageVersion String   @db.VarChar(20)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@map("arc_consents")
+}
+
+/// One entry per participant per day: five text boxes plus optional tools.
+model ArcEntry {
+  id            Int        @id @default(autoincrement())
+  /// Random per entry, e.g. WA-D07-00412. Judges and the AI only ever see this.
+  code          String     @unique @db.VarChar(20)
+  user          ArcUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        Int
+  day           Int
+  title         String     @db.VarChar(80)
+  problem       String     @db.Text
+  idea          String     @db.Text
+  howItWorks    String     @db.Text
+  firstTest     String     @db.Text
+  tools         String?    @db.VarChar(150)
+  /// Optional attachment (pitch, sketch, doc), saved in backend/uploads/arc as fileStored. Not part of the judging pack.
+  fileName      String?    @db.VarChar(191)
+  fileStored    String?    @db.VarChar(80)
+  fileType      String?    @db.VarChar(120)
+  fileSize      Int?
+  /// Fingerprint of the normalised text, to spot exact repeats on any day
+  contentHash   String     @db.Char(64)
+  /// Auto-flag reasons ("" when clean); flagged entries stay out of the judging pack until a person decides
+  flagReason    String     @default("") @db.VarChar(255)
+  /// null = not reviewed, "include" or "exclude"
+  adminDecision String?    @db.VarChar(10)
+  /// Judging score out of 100, entered by the team after the AI pass and human review
+  score         Int?
+  /// Picked for the day's live Zoom discussion (at most ARC_SHORTLIST_PER_DAY a day). Separate from the Top 10.
+  shortlisted   Boolean    @default(false)
+  zoomInvited   Boolean    @default(false)
+  zoomAttended  Boolean    @default(false)
+  /// Joined a paid workshop afterwards (tracked only for people who agreed to class updates)
+  workshopConverted Boolean @default(false)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  result        ArcResult?
+
+  @@unique([userId, day])
+  @@index([day])
+  @@index([contentHash])
+  @@map("arc_entries")
+}
+
+/// A day's Top 10, entered by the judges. Rank 1 is the winner.
+model ArcResult {
+  id          Int      @id @default(autoincrement())
+  day         Int
+  rank        Int
+  entry       ArcEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entryId     Int      @unique
+  /// Shown on the Winner Board from this time (6:00 PM IST the next day, or when published if later)
+  visibleFrom DateTime
+  /// Winner claim steps (rank 1 only)
+  contacted   Boolean  @default(false)
+  idChecked   Boolean  @default(false)
+  callDone    Boolean  @default(false)
+  /// Prize delivered (column name kept from the first version)
+  shipped     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@unique([day, rank])
+  @@map("arc_results")
+}
+
+/// Every "resolve code" lookup by an admin (who the participant behind a code is).
+/// Per-day settings the team edits in the dashboard: the day's topic, prompt and prize.
+/// The category is fixed by the day number (src/arc/schedule.ts).
+model ArcDay {
+  day              Int      @id
+  topic            String?  @db.VarChar(80)
+  prompt           String?  @db.VarChar(255)
+  prizeName        String?  @db.VarChar(120)
+  prizeDescription String?  @db.VarChar(500)
+  prizeImageUrl    String?  @db.VarChar(500)
+  /// The prize is shown on the website only once this is ticked
+  prizeConfirmed   Boolean  @default(false)
+  /// The evening Zoom discussion for shortlisted ideas, e.g. "7:00 PM IST, Oct 15". Shown only to invited participants.
+  zoomTime         String?  @db.VarChar(60)
+  zoomLink         String?  @db.VarChar(500)
+  updatedAt        DateTime @updatedAt
+
+  @@map("arc_days")
+}
+
+/// Winter Arc settings the admin changes in the dashboard, e.g. "startDate" (Day 1, yyyy-mm-dd; empty = stopped).
+model ArcSetting {
+  key       String   @id @db.VarChar(40)
+  value     String   @db.VarChar(255)
+  updatedAt DateTime @updatedAt
+
+  @@map("arc_settings")
+}
+
+model ArcAccessLog {
+  id        Int      @id @default(autoincrement())
+  code      String   @db.VarChar(20)
+  admin     String   @db.VarChar(120)
+  ip        String?  @db.VarChar(64)
+  createdAt DateTime @default(now())
+
+  @@map("arc_access_logs")
+}

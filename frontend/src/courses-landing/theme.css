@@ -1,0 +1,52 @@
+/* Quality Thought's own warm, orange-led theme — deliberately not the Upshift navy/orange
+   tokens from ../index.css. Scoped to .qt-theme so the rest of the site is unaffected;
+   works because Tailwind's generated utilities (bg-sun, text-ink, ...) read these same
+   CSS custom properties, which cascade down from whichever ancestor sets them. */
+.qt-theme {
+  --color-cream: #FFF8F1;
+  --color-paper: #FCEEE1;
+
+  --color-ink: #2B1810;
+  --color-ink-soft: #4E2C1C;
+  --color-ink-muted: #8B6F5E;
+
+  --color-sun: #E85D25;
+  --color-sun-light: #FBE0CC;
+
+  --color-sky: #F5A623;
+  --color-sky-light: #FEF0D6;
+
+  --color-violet: #C1391C;
+  --color-leaf: #4C9A2A;
+
+  --shadow-soft: 0 10px 40px -12px rgba(43, 24, 16, 0.18);
+  --shadow-card: 0 4px 24px -6px rgba(43, 24, 16, 0.12);
+  --shadow-lift: 0 20px 45px -15px rgba(43, 24, 16, 0.3);
+}
+
+/* Idea Challenge page (/idea-challenge): its own indigo + violet + teal look, layered on .qt-theme
+   (same token names, so every bg-sun / text-ink on the page picks it up). */
+.idea-theme {
+  --color-cream: #F7F6FF;
+  --color-paper: #ECEAFE;
+
+  --color-ink: #1B1645;
+  --color-ink-soft: #2F2A6B;
+  --color-ink-muted: #686492;
+
+  --color-sun: #6A45F5;
+  --color-sun-light: #E2DAFF;
+
+  --color-sky: #0FB5A6;
+  --color-sky-light: #D3F4EF;
+
+  --color-violet: #D6336C;
+  --color-leaf: #15935A;
+
+  --shadow-soft: 0 10px 40px -12px rgba(27, 22, 69, 0.2);
+  --shadow-card: 0 4px 24px -6px rgba(27, 22, 69, 0.12);
+  --shadow-lift: 0 20px 45px -15px rgba(27, 22, 69, 0.32);
+}
+.idea-theme .text-gradient {
+  background-image: linear-gradient(100deg, var(--color-sun) 0%, #3D7BF7 55%, var(--color-sky) 100%);
+}
